@@ -100,7 +100,6 @@ local function onPreRender(dt)
 
 	local vid = be:getPlayerVehicleID(0)
 	if vid >= 0 then
-		-- Clear our tracked hooks if the player switches vehicles
 		if M.lastVid ~= vid then
 			M.hookedCameras = {}
 			M.lastVid = vid
@@ -109,26 +108,26 @@ local function onPreRender(dt)
 		local allCams = core_camera.getCameraDataById(vid)
 
 		if allCams then
-			for camName, cam in pairs(allCams) do
-				-- Check our external table to see if we already hooked this specific camera
-				if type(cam.update) == "function" and not M.hookedCameras[camName] then
-					local originalUpdate = cam.update
+			-- Target ONLY the specific driver camera
+			local driverCamName = "driver"
+			local cam = allCams[driverCamName]
 
-					cam.update = function(self, camData)
-						-- 1. Run the game's default math first
-						originalUpdate(self, camData)
+			if cam and type(cam.update) == "function" and not M.hookedCameras[driverCamName] then
+				local originalUpdate = cam.update
 
-						-- 2. Inject our absolute tracking into the finalized camData.res table
-						if camData.res and camData.res.rot and camData.res.pos then
-							camData.res.rot = camData.res.rot * headRot
-							camData.res.pos = camData.res.pos + (camData.res.rot * headPos)
-						end
+				cam.update = function(self, camData)
+					-- 1. Run the game's default math first
+					originalUpdate(self, camData)
+
+					-- 2. Inject absolute tracking into the finalized camData.res table
+					if camData.res and camData.res.rot and camData.res.pos then
+						camData.res.rot = camData.res.rot * headRot
+						camData.res.pos = camData.res.pos + (camData.res.rot * headPos)
 					end
-
-					-- Mark as hooked in our external table
-					M.hookedCameras[camName] = true
-					log("I", "opentrack", "Hooked absolute tracking into: " .. tostring(camName))
 				end
+
+				M.hookedCameras[driverCamName] = true
+				log("I", "opentrack", "Successfully hooked absolute tracking ONLY for: " .. driverCamName)
 			end
 		end
 	end
