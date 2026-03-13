@@ -1,0 +1,7 @@
+{
+  "active": true,
+  "author": "You",
+  "title": "Native OpenTrack UDP Receiver",
+  "version": "1.0",
+  "description": "Bypasses Evdev to provide raw absolute 1:1 camera rotation for OpenTrack natively on Linux."
+}
