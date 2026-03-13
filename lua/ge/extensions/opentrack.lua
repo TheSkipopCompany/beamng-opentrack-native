@@ -1,4 +1,6 @@
 local M = {}
+-- Documentation: Ensure we load after core_camera to access its exported functions
+M.dependencies = { "core_camera" }
 local socket = require("socket")
 local ffi = require("ffi")
 
@@ -11,6 +13,9 @@ ffi.cdef([[
 
 local udpSocket = nil
 local otData = ffi.new("OpenTrackData")
+
+local headRot = quat()
+local headPos = vec3()
 
 local function onInit()
 	udpSocket = socket.udp()
@@ -72,8 +77,8 @@ local function onPreRender(dt)
 
 		-- Create absolute rotation quaternion
 		-- Swap pitch/roll/yaw here if your axes are inverted in-game
-		local headRot = quatFromEuler(pitch, roll, yaw)
-		local headPos = vec3(x, y, z)
+		headRot = quatFromEuler(pitch, roll, yaw)
+		headPos = vec3(x, y, z)
 		log(
 			"D",
 			"opentrack",
@@ -86,27 +91,34 @@ local function onPreRender(dt)
 				tostring(headPos)
 			)
 		)
+	end
 
-		local camData = core_camera.getCameraDataById(0)
+	-- Dynamically hook the active camera's update loop
+	local vid = be:getPlayerVehicleID(0)
+	if vid >= 0 then
+		local allCams = core_camera.getCameraDataById(vid)
+		local activeCamName = core_camera.getActiveCamName()
 
-		if camData and camData.res and camData.res.rot then
-			local finalRot = camData.res.rot * headRot
-			local finalPos = camData.res.pos + (camData.res.rot * headPos)
-			log(
-				"D",
-				"opentrack",
-				string.format(
-					"Final World -> Rot: (w:%.2f x:%.2f y:%.2f z:%.2f) | Pos: %s",
-					finalRot.w,
-					finalRot.x,
-					finalRot.y,
-					finalRot.z,
-					tostring(finalPos)
-				)
-			)
+		if allCams and activeCamName and allCams[activeCamName] then
+			local cam = allCams[activeCamName]
 
-			-- Force the absolute position and rotation
-			core_camera.setPosRot(0, finalPos, finalRot)
+			if not cam._opentrack_hooked then
+				local originalUpdate = cam.update
+
+				cam.update = function(self, camData)
+					-- 1. Run the game's default math first (Driver movement, vibration, etc)
+					originalUpdate(self, camData)
+
+					-- 2. Inject our absolute tracking into the finalized camData.res table
+					if camData.res and camData.res.rot and camData.res.pos then
+						camData.res.rot = camData.res.rot * headRot
+						camData.res.pos = camData.res.pos + (camData.res.rot * headPos)
+					end
+				end
+
+				cam._opentrack_hooked = true
+				log("I", "opentrack", "Hooked absolute tracking into: " .. tostring(activeCamName))
+			end
 		end
 	end
 end
