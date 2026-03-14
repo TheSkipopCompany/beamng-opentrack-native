@@ -19,6 +19,8 @@ local otPitch = 0
 local hasData = false
 local currentHook = nil
 
+local angleGain = 0.5 -- Start at 0.5 to cut the sensitivity in half
+
 local function onInit()
 	udpSocket = socket.udp()
 	if udpSocket then
@@ -99,8 +101,9 @@ local function onPreRender(dt)
 					-- Feed OpenTrack directly into the engine's native variables
 					if hasData then
 						-- You may need to add a '-' to these if they are inverted
-						self.relativeYaw = otYaw
-						self.relativePitch = otPitch
+						-- Apply the gain to the raw radians
+						self.relativeYaw = otYaw * angleGain
+						self.relativePitch = otPitch * angleGain
 					end
 
 					-- Now let the engine calculate its own flawless quaternions
