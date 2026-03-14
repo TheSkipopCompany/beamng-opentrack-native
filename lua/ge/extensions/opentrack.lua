@@ -14,8 +14,9 @@ ffi.cdef([[
 local udpSocket = nil
 local otData = ffi.new("OpenTrackData")
 
-local headRot = quat()
-local headPos = vec3()
+local qYaw = nil
+local qPitch = nil
+local currentHook = nil
 
 local function onInit()
 	udpSocket = socket.udp()
@@ -76,9 +77,15 @@ local function onPreRender(dt)
 		-- log("D", "opentrack", string.format("Translation (m) -> X: %.4f | Y: %.4f | Z: %.4f", x, y, z))
 
 		-- Create absolute rotation quaternion
-		-- Swap pitch/roll/yaw here if your axes are inverted in-game
-		headRot = quatFromEuler(pitch, roll, yaw)
-		headPos = vec3(x, y, z)
+		-- 1. Create independent quaternions for each axis
+		-- Adjust the negative signs here if an axis is backwards
+		qYaw = quatFromEuler(0, 0, yaw)
+		qPitch = quatFromEuler(pitch, 0, 0)
+
+		-- 2. Force the evaluation order: Apply Yaw first, then apply Pitch on top of it.
+		-- This absolutely prevents Pitch from bleeding into Roll when you look over your shoulder.
+		-- headRot = qYaw * qPitch
+		-- headPos = vec3(0, 0, 0) -- Mapping: Side(X), Forward(Z), Up(Y)
 		-- log(
 		-- 	"D",
 		-- 	"opentrack",
@@ -93,41 +100,34 @@ local function onPreRender(dt)
 		-- )
 	end
 
-	-- Table to track which cameras we have already intercepted
-	if not M.hookedCameras then
-		M.hookedCameras = {}
-	end
-
 	local vid = be:getPlayerVehicleID(0)
 	if vid >= 0 then
-		if M.lastVid ~= vid then
-			M.hookedCameras = {}
-			M.lastVid = vid
-		end
-
 		local allCams = core_camera.getCameraDataById(vid)
+		local cam = allCams and allCams["driver"]
 
-		if allCams then
-			-- Target ONLY the specific driver camera
-			local driverCamName = "driver"
-			local cam = allCams[driverCamName]
+		-- 2. Hook logic that survives car resets
+		if cam and type(cam.update) == "function" then
+			-- If the camera's update function isn't our current script's closure, we must hook it
+			-- (This triggers on first load, car resets, AND script reloads)
+			if cam.update ~= currentHook then
+				-- Backup the original function ONLY if it hasn't been backed up yet
+				if not cam._origUpdate then
+					cam._origUpdate = cam.update
+				end
 
-			if cam and type(cam.update) == "function" and not M.hookedCameras[driverCamName] then
-				local originalUpdate = cam.update
+				-- Create the new closure that reads from THIS script's live qYaw and qPitch
+				currentHook = function(self, camData)
+					self._origUpdate(self, camData)
 
-				cam.update = function(self, camData)
-					-- 1. Run the game's default math first
-					originalUpdate(self, camData)
-
-					-- 2. Inject absolute tracking into the finalized camData.res table
-					if camData.res and camData.res.rot and camData.res.pos then
-						camData.res.rot = camData.res.rot * headRot
-						camData.res.pos = camData.res.pos + (camData.res.rot * headPos)
+					if camData.res and camData.res.rot and qYaw and qPitch then
+						-- Correct math order: Car * Yaw * Pitch (Local Space)
+						camData.res.rot = camData.res.rot * qYaw * qPitch
 					end
 				end
 
-				M.hookedCameras[driverCamName] = true
-				log("I", "opentrack", "Successfully hooked absolute tracking ONLY for: " .. driverCamName)
+				-- Apply the hook
+				cam.update = currentHook
+				log("I", "opentrack", "Driver camera hooked/updated successfully")
 			end
 		end
 	end
@@ -137,6 +137,18 @@ local function onExtensionUnloaded()
 	if udpSocket then
 		udpSocket:close()
 		udpSocket = nil
+	end
+
+	local vid = be:getPlayerVehicleID(0)
+	if vid >= 0 then
+		local allCams = core_camera.getCameraDataById(vid)
+		local cam = allCams and allCams["driver"]
+
+		if cam and cam._origUpdate then
+			cam.update = cam._origUpdate
+			cam._origUpdate = nil -- Clear the backup
+			log("I", "opentrack", "Cleanly unhooked driver camera")
+		end
 	end
 end
 
